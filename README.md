@@ -27,5 +27,3 @@ Este projeto verifica periodicamente vagas de TI em Brasília usando a API da Ad
 ## Aviso de segurança
 O arquivo `.env` contém credenciais sensíveis e está listado no `.gitignore`. Nunca o commitre no repositório.
 
-## Licença
-MIT
