@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import telegram
 import mysql.connector
-from mysql.connector import Error  
+from mysql.connector import Error
 
 # Load environment variables
 load_dotenv()
@@ -94,8 +94,6 @@ def load_seen_jobs():
 
 def save_seen_jobs(seen_jobs):
     """Save seen job IDs to database (replace all)."""
-    # For simplicity, we delete all and re-insert.
-    # Could be optimized with upserts, but fine for low volume.
     connection = get_db_connection()
     if connection is None:
         return
@@ -221,7 +219,10 @@ def send_telegram_no_jobs_notification():
     try:
         bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
         message = "Verificação concluída: nenhuma nova vaga encontrada neste período."
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        async def send_message():
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+        
+        asyncio.run(send_message())
         print(f"Telegram notification sent: no new jobs")
         return True
     except Exception as e:
