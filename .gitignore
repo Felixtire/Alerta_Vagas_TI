@@ -1,7 +1,6 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
 
 # Ambiente virtual
 venv/
@@ -28,7 +27,7 @@ Thumbs.db
 *.tmp
 *.temp
 
-# Testes / cobertura
+# Testes
 .pytest_cache/
 .coverage
 htmlcov/
