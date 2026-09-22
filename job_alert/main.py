@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import telegram
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error  
 
 # Load environment variables
 load_dotenv()
