@@ -1,5 +1,4 @@
 import asyncio
-
 import requests
 import os
 import smtplib
@@ -9,6 +8,8 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import telegram
+import mysql.connector
+from mysql.connector import Error
 
 # Load environment variables
 load_dotenv()
@@ -23,30 +24,102 @@ EMAIL_PASS = os.getenv('EMAIL_PASS')
 EMAIL_TO = os.getenv('EMAIL_TO')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+# MySQL config
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_USER = os.getenv('DB_USER', 'root')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'root')
+DB_NAME = os.getenv('DB_NAME', 'job_alert')
+
 JOB_KEYWORDS = os.getenv('JOB_KEYWORDS', 'TI,JOVEM APRENDIZ TI,ESTÁGIO TI,PROFESSOR/MONITOR DE INFORMÁTICA').split(',')
 LOCATION = os.getenv('LOCATION', 'Brasília,DF')
 RADIUS = int(os.getenv('RADIUS', 10))
 MAX_AGE = int(os.getenv('MAX_AGE', 7))
 
+def get_db_connection():
+    """Create and return a MySQL database connection."""
+    try:
+        connection = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
+        return connection
+    except Error as e:
+        print(f"Error connecting to MySQL: {e}")
+        return None
 
-
-# File to store seen job IDs to avoid duplicates
-SEEN_JOBS_FILE = 'seen_jobs.json'
+def init_db():
+    """Initialize the database: create table if not exists."""
+    connection = get_db_connection()
+    if connection is None:
+        return
+    try:
+        cursor = connection.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS seen_jobs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                job_id VARCHAR(255) UNIQUE NOT NULL,
+                fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        connection.commit()
+        cursor.close()
+        connection.close()
+    except Error as e:
+        print(f"Error initializing MySQL table: {e}")
+    finally:
+        if connection.is_connected():
+            connection.close()
 
 def load_seen_jobs():
-    """Load previously seen job IDs from file"""
-    if os.path.exists(SEEN_JOBS_FILE):
-        with open(SEEN_JOBS_FILE, 'r') as f:
-            return set(json.load(f))
-    return set()
+    """Load previously seen job IDs from database."""
+    connection = get_db_connection()
+    if connection is None:
+        return set()
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT job_id FROM seen_jobs")
+        result = cursor.fetchall()
+        seen_jobs = {row[0] for row in result}
+        cursor.close()
+        connection.close()
+        return seen_jobs
+    except Error as e:
+        print(f"Error loading seen jobs from MySQL: {e}")
+        return set()
+    finally:
+        if connection.is_connected():
+            connection.close()
 
 def save_seen_jobs(seen_jobs):
-    """Save seen job IDs to file"""
-    with open(SEEN_JOBS_FILE, 'w') as f:
-        json.dump(list(seen_jobs), f)
+    """Save seen job IDs to database (replace all)."""
+    # For simplicity, we delete all and re-insert.
+    # Could be optimized with upserts, but fine for low volume.
+    connection = get_db_connection()
+    if connection is None:
+        return
+    try:
+        cursor = connection.cursor()
+        cursor.execute("DELETE FROM seen_jobs")
+        insert_query = "INSERT INTO seen_jobs (job_id) VALUES (%s)"
+        for job_id in seen_jobs:
+            cursor.execute(insert_query, (job_id,))
+        connection.commit()
+        cursor.close()
+        connection.close()
+    except Error as e:
+        print(f"Error saving seen jobs to MySQL: {e}")
+    finally:
+        if connection.is_connected():
+            connection.close()
+
+def is_new_job(job_id, seen_jobs):
+    """Check if job is new."""
+    return job_id not in seen_jobs
 
 def fetch_jobs():
-    """Fetch jobs from Adzuna API"""
+    """Fetch jobs from Adzuna API."""
     all_jobs = []
     
     for keyword in JOB_KEYWORDS:
@@ -83,12 +156,8 @@ def fetch_jobs():
     
     return all_jobs
 
-def is_new_job(job_id, seen_jobs):
-    """Check if job is new"""
-    return job_id not in seen_jobs
-
 def send_email_notification(job):
-    """Send email notification about a new job"""
+    """Send email notification about a new job."""
     msg = MIMEMultipart()
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_TO
@@ -123,7 +192,7 @@ def send_email_notification(job):
         return False
 
 def send_telegram_notification(job):
-    """Send Telegram notification about a new job"""
+    """Send Telegram notification about a new job."""
     try:
         bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
         
@@ -148,7 +217,7 @@ Mais info: {job['redirect_url']}"""
         return False
 
 def send_telegram_no_jobs_notification():
-    """Send Telegram notification when no new jobs are found"""
+    """Send Telegram notification when no new jobs are found."""
     try:
         bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
         message = "Verificação concluída: nenhuma nova vaga encontrada neste período."
@@ -160,8 +229,11 @@ def send_telegram_no_jobs_notification():
         return False
 
 def main():
-    """Main function to run the job alert system"""
+    """Main function to run the job alert system."""
     print("Iniciando Job Alert...")
+    
+    # Initialize DB (create table if needed)
+    init_db()
     
     # Load seen jobs
     seen_jobs = load_seen_jobs()
